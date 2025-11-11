@@ -1,46 +1,59 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import pickle
 import os
 
-st.write("Working directory:", os.getcwd())
-st.write("Files in working directory:", os.listdir("."))
-st.write("Files in /models:", os.listdir("./models") if os.path.exists("./models") else "NO MODELS FOLDER FOUND")
+# --------------------------------------------------------------
+# Streamlit Page Setup
+# --------------------------------------------------------------
+st.set_page_config(page_title="Metal Leaching Prediction App", layout="centered")
 
-st.set_page_config(page_title="Leaching Efficiency Predictor", layout="centered")
-
-st.title("🔮 Leaching Efficiency Predictor (Li, Co, Mn, Ni)")
+st.title("🔮 Metal Leaching Efficiency Predictor")
 st.write("""
-This tool uses **trained machine learning models** (with and without categorical variables) 
-to predict the leaching recovery of **Li, Co, Mn, Ni**.
-
-Enter input values manually **or** upload a CSV file containing the same columns.
+This app uses machine learning models trained on your leaching dataset to predict the 
+recovery percentages of **Li, Co, Mn, Ni**.  
+Models automatically preprocess numeric + categorical values, so **raw inputs are fine**.
 """)
 
-# -------------------------------------------
-# Load models
-# -------------------------------------------
+# --------------------------------------------------------------
+# Model Loader (ABSOLUTE PATH + DEBUG)
+# --------------------------------------------------------------
 @st.cache_resource
 def load_models():
-    models = {}
-    base_path = "models"
+    models_loaded = {}
+    
+    base_path = os.path.join(os.getcwd(), "models")
 
-    for label in ["withcat", "nocat"]:
-        for metal in ["Li", "Co", "Mn", "Ni"]:
-            fname = f"{base_path}/best_tuned_{label}_{metal}.pkl"
-            if os.path.exists(fname):
-                with open(fname, "rb") as f:
-                    models[f"{label}_{metal}"] = pickle.load(f)
-    return models
+    st.write("📁 **Model directory detected at:**", base_path)
+
+    if not os.path.exists(base_path):
+        st.error("❌ ERROR: 'models' folder does not exist. Upload models to /models.")
+        return models_loaded
+
+    st.write("📄 **Files found in /models:**", os.listdir(base_path))
+
+    for metal in ["Li", "Co", "Mn", "Ni"]:
+        for label in ["withcat", "nocat"]:
+            filename = f"best_tuned_{label}_{metal}.pkl"
+            filepath = os.path.join(base_path, filename)
+
+            st.write(f"Checking for: `{filename}`")
+
+            if os.path.exists(filepath):
+                with open(filepath, "rb") as f:
+                    models_loaded[f"{label}_{metal}"] = pickle.load(f)
+                st.success(f"✅ Loaded: {filename}")
+            else:
+                st.warning(f"⚠️ Missing model: {filename}")
+
+    return models_loaded
 
 models = load_models()
 
-st.success(f"✅ Loaded {len(models)} trained models.")
-
-
-# -------------------------------------------
-# Input columns (raw, non-normalized)
-# -------------------------------------------
+# --------------------------------------------------------------
+# Input Column Definitions
+# --------------------------------------------------------------
 numeric_cols = [
     "Li in feed %",
     "Co in feed %",
@@ -59,27 +72,23 @@ categorical_cols = [
 
 all_cols = numeric_cols + categorical_cols
 
+# --------------------------------------------------------------
+# Input Method Selector
+# --------------------------------------------------------------
+st.header("📥 Provide Input Data")
+method = st.radio("Choose input method:", ["Manual Input", "Upload CSV"])
 
-# -------------------------------------------
-# Input Method Selection
-# -------------------------------------------
-st.header("📥 Choose Input Method")
-method = st.radio("How do you want to provide data?", ["Manual Input", "Upload CSV"])
-
-
-# -------------------------------------------
+# --------------------------------------------------------------
 # Manual Input Form
-# -------------------------------------------
+# --------------------------------------------------------------
 def manual_input():
-    st.subheader("📝 Enter Input Values")
+    st.subheader("📝 Manual Input")
 
     data = {}
 
-    # numeric inputs
     for col in numeric_cols:
-        data[col] = st.number_input(col, value=0.0, format="%.4f")
+        data[col] = st.number_input(col, step=0.01, value=0.0)
 
-    # categorical inputs
     data["Leaching agent"] = st.selectbox(
         "Leaching agent",
         ["ORGANIC_ACID", "INORGANIC_ACID", "BASE", "UNKNOWN"]
@@ -90,70 +99,57 @@ def manual_input():
         ["YES", "NO", "UNKNOWN"]
     )
 
-    df = pd.DataFrame([data])
-    return df
+    return pd.DataFrame([data])
 
-
-# -------------------------------------------
+# --------------------------------------------------------------
 # CSV Upload
-# -------------------------------------------
+# --------------------------------------------------------------
 def upload_input():
-    st.subheader("📤 Upload CSV File")
-
-    file = st.file_uploader("Upload CSV", type=["csv"])
-    if file is not None:
+    st.subheader("📤 Upload Input CSV File")
+    file = st.file_uploader("Upload input CSV", type=["csv"])
+    if file:
         df = pd.read_csv(file)
         missing = [c for c in all_cols if c not in df.columns]
         if missing:
             st.error(f"❌ Missing required columns: {missing}")
-        else:
-            st.write("✅ Input Preview")
-            st.dataframe(df.head())
-            return df
+            return None
+        st.write("✅ Preview:")
+        st.dataframe(df.head())
+        return df
     return None
 
-
-# -------------------------------------------
-# Select pipeline depending on data
-# -------------------------------------------
+# Determine which pipeline to use
 def detect_pipeline(df):
     if all(c in df.columns for c in categorical_cols):
         return "withcat"
     else:
         return "nocat"
 
-
-# -------------------------------------------
-# Predict
-# -------------------------------------------
+# Run predictions
 def run_predictions(df):
     pipeline_type = detect_pipeline(df)
+    st.info(f"📌 Using **{pipeline_type.upper()}** models.")
 
-    st.info(f"Using **{pipeline_type.upper()}** models based on available columns.")
-
-    preds = pd.DataFrame()
-    preds["index"] = df.index
+    results = pd.DataFrame(index=df.index)
 
     for metal in ["Li", "Co", "Mn", "Ni"]:
         key = f"{pipeline_type}_{metal}"
+
         if key not in models:
-            st.error(f"Model not found: {key}")
+            st.error(f"❌ Model not found: {key}")
             continue
 
         model = models[key]
-
         try:
-            preds[f"pred_{metal}"] = model.predict(df)
+            results[f"pred_{metal}"] = model.predict(df)
         except Exception as e:
             st.error(f"Prediction failed for {metal}: {e}")
 
-    preds = preds.set_index("index")
-    return preds
+    return results
 
-
-# -------------------------------------------
-# MAIN LOGIC
-# -------------------------------------------
+# --------------------------------------------------------------
+# Main Logic
+# --------------------------------------------------------------
 if method == "Manual Input":
     df_input = manual_input()
 else:
@@ -161,15 +157,19 @@ else:
 
 if df_input is not None:
     if st.button("🔮 Predict"):
-        results = run_predictions(df_input)
+        preds = run_predictions(df_input)
 
         st.subheader("✅ Predictions")
-        st.dataframe(results)
+        st.dataframe(preds)
 
-        # Download
-        out = pd.concat([df_input, results], axis=1)
-        out_name = "predictions.xlsx"
-        out.to_excel(out_name, index=False)
+        # Save Excel output
+        output = pd.concat([df_input, preds], axis=1)
+        out_path = "predictions.xlsx"
+        output.to_excel(out_path, index=False)
 
-        st.download_button("📥 Download Predictions", data=open(out_name, "rb"),
-                           file_name=out_name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            "📥 Download Results",
+            data=open(out_path, "rb").read(),
+            file_name="predictions.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
