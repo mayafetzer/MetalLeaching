@@ -3,6 +3,10 @@ import pandas as pd
 import pickle
 import os
 
+st.write("Working directory:", os.getcwd())
+st.write("Files in working directory:", os.listdir("."))
+st.write("Files in /models:", os.listdir("./models") if os.path.exists("./models") else "NO MODELS FOLDER FOUND")
+
 st.set_page_config(page_title="Leaching Efficiency Predictor", layout="centered")
 
 st.title("🔮 Leaching Efficiency Predictor (Li, Co, Mn, Ni)")
